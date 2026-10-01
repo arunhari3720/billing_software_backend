@@ -1,0 +1,10 @@
+import {Router} from "express";
+import {loginController,registerController,meController} from "../controllers/auth.controller.js";
+import {requireAuth} from "../middlewares/auth.middleware.js";
+import {validate} from "../middlewares/validate.middleware.js";
+import {loginSchema,registerSchema} from "../validations/auth.validation.js";
+const r=Router();
+r.post("/login",validate(loginSchema),loginController);
+r.post("/register",validate(registerSchema),registerController);
+r.get("/me",requireAuth,meController);
+export default r;
