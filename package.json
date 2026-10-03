@@ -4,8 +4,8 @@
   "description": "Billing SaaS Backend",
   "main": "src/server.js",
   "scripts": {
-    "dev": "nodemon src/server.js",
-    "start": "node src/server.js"
+    "start": "nodemon src/server.js",
+    "dev": "node src/server.js"
   },
   "keywords": [],
   "author": "",
