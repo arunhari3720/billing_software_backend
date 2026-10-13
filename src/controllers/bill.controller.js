@@ -1,4 +1,5 @@
 import { Bill } from "../models/Bill.model.js";
+import GstSetting from "../models/GstSetting.js";
 import { createBill } from "../services/bill.service.js";
 
 
@@ -89,23 +90,83 @@ export async function getBill(
 // POST /create-bill
 // =========================================
 
+// export async function createBillController(
+//   req,
+//   res,
+//   next,
+// ) {
+//   try {
+//     const bill =
+//       await createBill({
+//         agencyId:
+//           req.agencyId,
+
+//         userId:
+//           req.user._id,
+
+//         data:
+//           req.body,
+//       });
+
+//     res.status(201).json({
+//       success: true,
+//       data: bill,
+//     });
+//   } catch (error) {
+//     next(error);
+//   }
+// }
+
+// =========================================
+// POST /create-bill
+// =========================================
+
 export async function createBillController(
   req,
   res,
   next,
 ) {
   try {
-    const bill =
-      await createBill({
-        agencyId:
-          req.agencyId,
+    // =========================================
+    // GET GST SETTINGS FOR CURRENT AGENCY
+    // =========================================
 
-        userId:
-          req.user._id,
+    let gstSettings = await GstSetting.findOne({
+      agency: req.agencyId,
+    }).lean();
 
-        data:
-          req.body,
-      });
+    // If GST settings are not created yet,
+    // use safe defaults.
+    if (!gstSettings) {
+      gstSettings = {
+        enabled: false,
+        calculationMode: "BEFORE_TAX",
+        taxType: "AUTO",
+        defaultGstRate: 18,
+        sellerState: "",
+      };
+    }
+
+    // =========================================
+    // CREATE BILL
+    // =========================================
+
+    const bill = await createBill({
+      agencyId: req.agencyId,
+
+      userId: req.user._id,
+
+      data: req.body,
+
+      // GST configuration is passed to the
+      // billing service so the calculation
+      // happens in one centralized place.
+      gstSettings,
+    });
+
+    // =========================================
+    // RESPONSE
+    // =========================================
 
     res.status(201).json({
       success: true,
@@ -115,7 +176,6 @@ export async function createBillController(
     next(error);
   }
 }
-
 
 // =========================================
 // GET /get-profit-report

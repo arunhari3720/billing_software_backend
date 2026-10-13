@@ -1,3 +1,4 @@
+
 import mongoose from "mongoose";
 
 import { Bill } from "../models/Bill.model.js";
@@ -16,6 +17,209 @@ function roundMoney(value) {
 }
 
 // =========================================
+// RESOLVE TAX TYPE
+// =========================================
+
+function resolveTaxType({
+  configuredTaxType,
+  sellerState,
+  customerState,
+}) {
+  // Explicit IGST
+  if (configuredTaxType === "IGST") {
+    return "IGST";
+  }
+
+  // Explicit CGST + SGST
+  if (configuredTaxType === "CGST_SGST") {
+    return "CGST_SGST";
+  }
+
+  // AUTO
+  //
+  // Same state  -> CGST + SGST
+  // Different   -> IGST
+  //
+  // If state information is unavailable,
+  // fallback to CGST + SGST.
+
+  const seller = String(sellerState || "")
+    .trim()
+    .toLowerCase();
+
+  const customer = String(customerState || "")
+    .trim()
+    .toLowerCase();
+
+  if (!seller || !customer) {
+    return "CGST_SGST";
+  }
+
+  return seller === customer
+    ? "CGST_SGST"
+    : "IGST";
+}
+
+// =========================================
+// CALCULATE GST
+// =========================================
+
+function calculateGst({
+  amount,
+  gstRate,
+  enabled,
+  calculationMode,
+  taxType,
+}) {
+  const price = roundMoney(amount);
+
+  // =========================================
+  // GST DISABLED
+  // =========================================
+
+  if (!enabled) {
+    return {
+      taxable: price,
+      gst: 0,
+      cgst: 0,
+      sgst: 0,
+      igst: 0,
+      total: price,
+    };
+  }
+
+  const rate = Number(gstRate || 0);
+
+  if (!Number.isFinite(rate) || rate < 0) {
+    return {
+      taxable: price,
+      gst: 0,
+      cgst: 0,
+      sgst: 0,
+      igst: 0,
+      total: price,
+    };
+  }
+
+  // =========================================
+  // ZERO GST
+  // =========================================
+
+  if (rate === 0) {
+    return {
+      taxable: price,
+      gst: 0,
+      cgst: 0,
+      sgst: 0,
+      igst: 0,
+      total: price,
+    };
+  }
+
+  let taxable;
+  let gst;
+  let total;
+
+  // =========================================
+  // BEFORE TAX
+  // =========================================
+  //
+  // Example:
+  //
+  // Price = ₹1000
+  // GST   = 18%
+  //
+  // Taxable = ₹1000
+  // GST     = ₹180
+  // Total   = ₹1180
+  //
+  // =========================================
+
+  if (calculationMode === "BEFORE_TAX") {
+    taxable = price;
+
+    gst = roundMoney(
+      (taxable * rate) / 100
+    );
+
+    total = roundMoney(
+      taxable + gst
+    );
+  }
+
+  // =========================================
+  // AFTER TAX
+  // =========================================
+  //
+  // Example:
+  //
+  // Price = ₹1180
+  // GST   = 18%
+  //
+  // Taxable = ₹1000
+  // GST     = ₹180
+  // Total   = ₹1180
+  //
+  // =========================================
+
+  else if (calculationMode === "AFTER_TAX") {
+    total = price;
+
+    taxable = roundMoney(
+      total / (1 + rate / 100)
+    );
+
+    gst = roundMoney(
+      total - taxable
+    );
+  }
+
+  // =========================================
+  // SAFETY FALLBACK
+  // =========================================
+
+  else {
+    taxable = price;
+
+    gst = roundMoney(
+      (taxable * rate) / 100
+    );
+
+    total = roundMoney(
+      taxable + gst
+    );
+  }
+
+  // =========================================
+  // SPLIT TAX
+  // =========================================
+
+  let cgst = 0;
+  let sgst = 0;
+  let igst = 0;
+
+  if (taxType === "IGST") {
+    igst = gst;
+  } else {
+    cgst = roundMoney(gst / 2);
+
+    // Keep total GST exact after rounding
+    sgst = roundMoney(gst - cgst);
+  }
+
+  return {
+    taxable: roundMoney(taxable),
+    gst: roundMoney(gst),
+
+    cgst,
+    sgst,
+    igst,
+
+    total: roundMoney(total),
+  };
+}
+
+// =========================================
 // CREATE BILL
 // =========================================
 
@@ -23,11 +227,62 @@ export async function createBill({
   agencyId,
   userId,
   data,
+  gstSettings,
 }) {
   const session = await mongoose.startSession();
 
   try {
     session.startTransaction();
+
+    // =========================================
+    // GST CONFIGURATION
+    // =========================================
+
+    const gstConfig = {
+      enabled: Boolean(
+        gstSettings?.enabled
+      ),
+
+      calculationMode:
+        gstSettings?.calculationMode ||
+        "BEFORE_TAX",
+
+      taxType:
+        gstSettings?.taxType ||
+        "AUTO",
+
+      defaultGstRate:
+        Number(
+          gstSettings?.defaultGstRate ?? 18
+        ),
+
+      sellerState:
+        gstSettings?.sellerState || "",
+    };
+
+    // =========================================
+    // CUSTOMER STATE
+    // =========================================
+
+    const customerState =
+      data.customerState ||
+      data.placeOfSupply ||
+      "";
+
+    // =========================================
+    // RESOLVE TAX TYPE
+    // =========================================
+
+    const resolvedTaxType =
+      resolveTaxType({
+        configuredTaxType:
+          gstConfig.taxType,
+
+        sellerState:
+          gstConfig.sellerState,
+
+        customerState,
+      });
 
     // =========================================
     // 1. VALIDATE STORE
@@ -44,7 +299,7 @@ export async function createBill({
         new Error("Invalid store"),
         {
           status: 400,
-        },
+        }
       );
     }
 
@@ -58,11 +313,11 @@ export async function createBill({
     ) {
       throw Object.assign(
         new Error(
-          "Bill must contain at least one item",
+          "Bill must contain at least one item"
         ),
         {
           status: 400,
-        },
+        }
       );
     }
 
@@ -71,7 +326,7 @@ export async function createBill({
     // =========================================
 
     const productIds = data.items.map(
-      (item) => item.productId,
+      (item) => item.productId
     );
 
     // =========================================
@@ -83,14 +338,12 @@ export async function createBill({
     // We DO NOT trust frontend price.
     //
     // Frontend only sends:
+    //
     // productId
     // qty
     //
     // Price and GST are taken directly
     // from Product DB.
-    //
-    // retailPrice = Product.retailPrice
-    // gstRate     = Product.gstRate
     //
     // =========================================
 
@@ -108,7 +361,7 @@ export async function createBill({
       products.map((product) => [
         product._id.toString(),
         product,
-      ]),
+      ])
     );
 
     // =========================================
@@ -118,7 +371,14 @@ export async function createBill({
     const billItems = [];
 
     let subtotal = 0;
+
     let gstTotal = 0;
+
+    let cgstTotal = 0;
+
+    let sgstTotal = 0;
+
+    let igstTotal = 0;
 
     // =========================================
     // 6. PROCESS EACH ITEM
@@ -126,7 +386,7 @@ export async function createBill({
 
     for (const line of data.items) {
       const product = productMap.get(
-        String(line.productId),
+        String(line.productId)
       );
 
       if (!product) {
@@ -134,7 +394,7 @@ export async function createBill({
           new Error("Product not found"),
           {
             status: 400,
-          },
+          }
         );
       }
 
@@ -150,11 +410,11 @@ export async function createBill({
       ) {
         throw Object.assign(
           new Error(
-            `${product.name}: invalid quantity`,
+            `${product.name}: invalid quantity`
           ),
           {
             status: 400,
-          },
+          }
         );
       }
 
@@ -164,127 +424,147 @@ export async function createBill({
       //
       // IMPORTANT:
       //
-      // Do NOT calculate retail price again here.
+      // We always take retailPrice from DB.
       //
-      // Product page already calculated and
-      // stored the retailPrice.
+      // GST setting decides whether this price
+      // is treated as:
       //
-      // Billing simply uses:
-      //
-      // product.retailPrice
+      // BEFORE TAX
+      // OR
+      // AFTER TAX
       //
       // =========================================
 
       const retailPrice = roundMoney(
-        product.retailPrice,
+        product.retailPrice
+      );
+
+      const lineAmount = roundMoney(
+        retailPrice * qty
       );
 
       // =========================================
       // GST RATE
       // =========================================
+      //
+      // Product GST rate has priority.
+      //
+      // If product GST rate is missing/invalid,
+      // use agency default GST rate.
+      //
+      // =========================================
 
-      const gstRate = Number(
-        product.gstRate || 0,
+      let gstRate = Number(
+        product.gstRate
       );
 
-      // =========================================
-      // TAXABLE AMOUNT
-      // =========================================
-      //
-      // Example:
-      //
-      // Retail Price = ₹14.58
-      // Qty          = 1
-      //
-      // Taxable      = ₹14.58
-      //
-      // =========================================
+      if (
+        !Number.isFinite(gstRate) ||
+        gstRate < 0
+      ) {
+        gstRate =
+          gstConfig.defaultGstRate;
+      }
 
-      const taxable = roundMoney(
-        retailPrice * qty,
-      );
+      // If GST is disabled, rate becomes 0.
+      if (!gstConfig.enabled) {
+        gstRate = 0;
+      }
 
       // =========================================
-      // BILLING GST
-      // =========================================
-      //
-      // GST is ADDED on top of retailPrice.
-      //
-      // Example:
-      //
-      // ₹14.58 × 18%
-      // = ₹2.6244
-      // = ₹2.62
-      //
+      // CALCULATE GST
       // =========================================
 
-      const gst = roundMoney(
-        (taxable * gstRate) / 100,
-      );
+      const gstCalculation =
+        calculateGst({
+          amount: lineAmount,
 
-      // =========================================
-      // CUSTOMER TOTAL
-      // =========================================
-      //
-      // Example:
-      //
-      // ₹14.58
-      // + ₹2.62 GST
-      // = ₹17.20
-      //
-      // =========================================
+          gstRate,
 
-      const total = roundMoney(
-        taxable + gst,
-      );
+          enabled:
+            gstConfig.enabled,
+
+          calculationMode:
+            gstConfig.calculationMode,
+
+          taxType:
+            resolvedTaxType,
+        });
+
+      const taxable =
+        gstCalculation.taxable;
+
+      const gst =
+        gstCalculation.gst;
+
+      const cgst =
+        gstCalculation.cgst;
+
+      const sgst =
+        gstCalculation.sgst;
+
+      const igst =
+        gstCalculation.igst;
+
+      const total =
+        gstCalculation.total;
 
       // =========================================
       // UPDATE BILL TOTALS
       // =========================================
 
       subtotal = roundMoney(
-        subtotal + taxable,
+        subtotal + taxable
       );
 
       gstTotal = roundMoney(
-        gstTotal + gst,
+        gstTotal + gst
+      );
+
+      cgstTotal = roundMoney(
+        cgstTotal + cgst
+      );
+
+      sgstTotal = roundMoney(
+        sgstTotal + sgst
+      );
+
+      igstTotal = roundMoney(
+        igstTotal + igst
       );
 
       // =========================================
       // SNAPSHOT PRODUCT DATA
       // =========================================
-      //
-      // These values are copied from Product DB.
-      // They are NOT recalculated here.
-      //
-      // This keeps the bill as a historical
-      // snapshot of the product at billing time.
-      //
-      // =========================================
 
       const rawPrice = roundMoney(
-        product.rawPrice,
+        product.rawPrice
       );
 
       const rawGstAmount = roundMoney(
-        product.rawGstAmount,
+        product.rawGstAmount
       );
 
       const rawTotalPrice = roundMoney(
-        product.rawTotalPrice,
+        product.rawTotalPrice
       );
 
-      const marginPercentage = Number(
-        product.marginPercentage || 0,
-      );
+      const marginPercentage =
+        Number(
+          product.marginPercentage || 0
+        );
 
       const marginPrice = roundMoney(
-        product.marginPrice,
+        product.marginPrice
       );
 
       const marginGst = roundMoney(
-        product.marginGst,
+        product.marginGst
       );
+
+      // =========================================
+      // BILL ITEM
+      // =========================================
 
       billItems.push({
         product: product._id,
@@ -317,6 +597,12 @@ export async function createBill({
 
         gst,
 
+        cgst,
+
+        sgst,
+
+        igst,
+
         total,
       });
     }
@@ -324,16 +610,9 @@ export async function createBill({
     // =========================================
     // 7. GRAND TOTAL
     // =========================================
-    //
-    // subtotal = taxable amount
-    // gstTotal = total GST
-    //
-    // grandTotal = subtotal + GST
-    //
-    // =========================================
 
     const grandTotal = roundMoney(
-      subtotal + gstTotal,
+      subtotal + gstTotal
     );
 
     // =========================================
@@ -352,28 +631,66 @@ export async function createBill({
           createdBy: userId,
 
           customerName: String(
-            data.customerName || "",
+            data.customerName || ""
           ).trim(),
 
           customerPhone: String(
-            data.customerPhone || "",
+            data.customerPhone || ""
           ).trim(),
+
+          // Customer state is useful for
+          // GST audit/history.
+          customerState: String(
+            customerState || ""
+          ).trim(),
+
+          // Snapshot GST configuration used
+          // when this bill was created.
+          gstEnabled:
+            gstConfig.enabled,
+
+          gstCalculationMode:
+            gstConfig.calculationMode,
+
+          taxType:
+            resolvedTaxType,
 
           items: billItems,
 
-          // Taxable subtotal
+          // =====================================
+          // TAXABLE SUBTOTAL
+          // =====================================
+
           subtotal: roundMoney(
-            subtotal,
+            subtotal
           ),
 
-          // Total GST
+          // =====================================
+          // GST BREAKDOWN
+          // =====================================
+
           gstTotal: roundMoney(
-            gstTotal,
+            gstTotal
           ),
 
-          // Taxable + GST
+          cgstTotal: roundMoney(
+            cgstTotal
+          ),
+
+          sgstTotal: roundMoney(
+            sgstTotal
+          ),
+
+          igstTotal: roundMoney(
+            igstTotal
+          ),
+
+          // =====================================
+          // FINAL TOTAL
+          // =====================================
+
           grandTotal: roundMoney(
-            grandTotal,
+            grandTotal
           ),
 
           paymentMethod:
@@ -382,7 +699,7 @@ export async function createBill({
       ],
       {
         session,
-      },
+      }
     );
 
     const createdBill = bill[0];
@@ -393,11 +710,11 @@ export async function createBill({
 
     for (const item of billItems) {
       const product = productMap.get(
-        item.product.toString(),
+        item.product.toString()
       );
 
       const beforeQty = Number(
-        product.stockQty,
+        product.stockQty
       );
 
       const updatedProduct =
@@ -426,22 +743,22 @@ export async function createBill({
             session,
 
             runValidators: true,
-          },
+          }
         );
 
       if (!updatedProduct) {
         throw Object.assign(
           new Error(
-            `${product.name}: insufficient stock`,
+            `${product.name}: insufficient stock`
           ),
           {
             status: 400,
-          },
+          }
         );
       }
 
       const afterQty = Number(
-        updatedProduct.stockQty,
+        updatedProduct.stockQty
       );
 
       // =========================================
@@ -473,7 +790,7 @@ export async function createBill({
         ],
         {
           session,
-        },
+        }
       );
     }
 
@@ -488,24 +805,22 @@ export async function createBill({
     // =========================================
 
     return Bill.findById(
-      createdBill._id,
+      createdBill._id
     )
       .populate(
         "store",
-        "name",
+        "name"
       )
       .populate(
         "createdBy",
-        "name",
+        "name"
       );
-
   } catch (error) {
     if (session.inTransaction()) {
       await session.abortTransaction();
     }
 
     throw error;
-
   } finally {
     await session.endSession();
   }

@@ -1,4 +1,9 @@
+
 import mongoose from "mongoose";
+
+// =========================================
+// BILL ITEM SCHEMA
+// =========================================
 
 const billItemSchema =
   new mongoose.Schema(
@@ -84,17 +89,39 @@ const billItemSchema =
         min: 0,
       },
 
-      // Customer selling subtotal
+      // =========================================
+      // GST RATE
+      // =========================================
+
+      gstRate: {
+        type: Number,
+        required: true,
+        min: 0,
+        default: 0,
+      },
+
+      // =========================================
+      // TAXABLE AMOUNT
+      // =========================================
+      //
+      // BEFORE_TAX:
+      // retail price × qty
+      //
+      // AFTER_TAX:
+      // GST-exclusive amount extracted
+      // from the GST-inclusive selling price.
+      //
+      // =========================================
+
       taxable: {
         type: Number,
         required: true,
         min: 0,
       },
 
-      // IMPORTANT:
-      // Billing GST is NOT calculated again.
-      //
-      // Kept as 0 for compatibility.
+      // =========================================
+      // TOTAL GST
+      // =========================================
 
       gst: {
         type: Number,
@@ -103,7 +130,43 @@ const billItemSchema =
         default: 0,
       },
 
-      // Customer payable total
+      // =========================================
+      // CGST
+      // =========================================
+
+      cgst: {
+        type: Number,
+        required: true,
+        min: 0,
+        default: 0,
+      },
+
+      // =========================================
+      // SGST
+      // =========================================
+
+      sgst: {
+        type: Number,
+        required: true,
+        min: 0,
+        default: 0,
+      },
+
+      // =========================================
+      // IGST
+      // =========================================
+
+      igst: {
+        type: Number,
+        required: true,
+        min: 0,
+        default: 0,
+      },
+
+      // =========================================
+      // CUSTOMER PAYABLE TOTAL
+      // =========================================
+
       total: {
         type: Number,
         required: true,
@@ -115,14 +178,26 @@ const billItemSchema =
     },
   );
 
+// =========================================
+// BILL SCHEMA
+// =========================================
+
 const billSchema =
   new mongoose.Schema(
     {
+      // =========================================
+      // BILL NUMBER
+      // =========================================
+
       billNo: {
         type: String,
         required: true,
         index: true,
       },
+
+      // =========================================
+      // AGENCY
+      // =========================================
 
       agency: {
         type: mongoose.Schema.Types.ObjectId,
@@ -131,17 +206,29 @@ const billSchema =
         index: true,
       },
 
+      // =========================================
+      // STORE
+      // =========================================
+
       store: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Store",
         required: true,
       },
 
+      // =========================================
+      // CREATED BY
+      // =========================================
+
       createdBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "User",
         required: true,
       },
+
+      // =========================================
+      // CUSTOMER
+      // =========================================
 
       customerName: {
         type: String,
@@ -154,6 +241,62 @@ const billSchema =
         default: "",
         trim: true,
       },
+
+      // =========================================
+      // CUSTOMER STATE
+      // =========================================
+      //
+      // Used while determining:
+      //
+      // Same state  -> CGST + SGST
+      // Other state -> IGST
+      //
+      // Stored as a snapshot so historical
+      // bills are not affected by later settings.
+      //
+      // =========================================
+
+      customerState: {
+        type: String,
+        default: "",
+        trim: true,
+      },
+
+      // =========================================
+      // GST CONFIGURATION SNAPSHOT
+      // =========================================
+      //
+      // These values represent the GST settings
+      // that were active when this bill was created.
+      //
+      // =========================================
+
+      gstEnabled: {
+        type: Boolean,
+        default: false,
+      },
+
+      gstCalculationMode: {
+        type: String,
+        enum: [
+          "BEFORE_TAX",
+          "AFTER_TAX",
+        ],
+        default: "BEFORE_TAX",
+      },
+
+      taxType: {
+        type: String,
+        enum: [
+          "CGST_SGST",
+          "IGST",
+        ],
+        default: "CGST_SGST",
+      },
+
+      // =========================================
+      // BILL ITEMS
+      // =========================================
 
       items: {
         type: [billItemSchema],
@@ -172,14 +315,20 @@ const billSchema =
         },
       },
 
-      // Customer selling subtotal
+      // =========================================
+      // TAXABLE SUBTOTAL
+      // =========================================
+
       subtotal: {
         type: Number,
         required: true,
         min: 0,
       },
 
-      // Billing GST = 0
+      // =========================================
+      // TOTAL GST
+      // =========================================
+
       gstTotal: {
         type: Number,
         required: true,
@@ -187,12 +336,52 @@ const billSchema =
         default: 0,
       },
 
-      // Customer final payable
+      // =========================================
+      // CGST TOTAL
+      // =========================================
+
+      cgstTotal: {
+        type: Number,
+        required: true,
+        min: 0,
+        default: 0,
+      },
+
+      // =========================================
+      // SGST TOTAL
+      // =========================================
+
+      sgstTotal: {
+        type: Number,
+        required: true,
+        min: 0,
+        default: 0,
+      },
+
+      // =========================================
+      // IGST TOTAL
+      // =========================================
+
+      igstTotal: {
+        type: Number,
+        required: true,
+        min: 0,
+        default: 0,
+      },
+
+      // =========================================
+      // CUSTOMER FINAL PAYABLE
+      // =========================================
+
       grandTotal: {
         type: Number,
         required: true,
         min: 0,
       },
+
+      // =========================================
+      // PAYMENT METHOD
+      // =========================================
 
       paymentMethod: {
         type: String,
@@ -210,6 +399,10 @@ const billSchema =
     },
   );
 
+// =========================================
+// INDEXES
+// =========================================
+
 billSchema.index({
   agency: 1,
   createdAt: -1,
@@ -219,6 +412,10 @@ billSchema.index({
   agency: 1,
   billNo: 1,
 });
+
+// =========================================
+// MODEL
+// =========================================
 
 export const Bill =
   mongoose.model(

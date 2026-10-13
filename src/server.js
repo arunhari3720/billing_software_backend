@@ -15,7 +15,8 @@ import billRoutes from "./routes/bill.routes.js";
 import optionalBillRoutes from "./routes/optionalBill.routes.js";
 import dashboardRoutes from "./routes/dashboard.routes.js";
 import stockRoutes from "./routes/stock.routes.js";
-
+import gstSettingRoutes from "./routes/gstsetting.routes.js";
+import productOptionRoutes from "./routes/productoption.routes.js"
 const app=express();
 app.set("trust proxy",1);
 app.use(helmet());
@@ -40,6 +41,8 @@ app.use("/api/bills",billRoutes);
 app.use("/api/optional-bills",optionalBillRoutes);
 app.use("/api/dashboard",dashboardRoutes);
 app.use("/api/stock",stockRoutes);
+app.use("/api/gst-settings", gstSettingRoutes);
+app.use("/api/product-options", productOptionRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

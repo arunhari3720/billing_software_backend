@@ -13,7 +13,7 @@ import billRoutes from "./routes/bill.routes.js";
 import optionalBillRoutes from "./routes/optionalBill.routes.js";
 import dashboardRoutes from "./routes/dashboard.routes.js";
 import stockRoutes from "./routes/stock.routes.js";
-
+import gstSettingRoutes from "./routes/gstsetting.routes.js";
 import {
   notFound,
   errorHandler
@@ -73,7 +73,8 @@ app.use("/api/bills", billRoutes);
 app.use("/api/optional-bills", optionalBillRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/stock", stockRoutes);
-
+console.log("GST ROUTES LOADED");
+app.use("/api/gst-settings", gstSettingRoutes);
 /*
 |--------------------------------------------------------------------------
 | Error Handling
